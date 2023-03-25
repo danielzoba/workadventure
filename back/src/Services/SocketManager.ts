@@ -108,7 +108,6 @@ export class SocketManager {
     ): Promise<{ room: GameRoom; user: User }> {
         //join new previous room
         const { room, user } = await this.joinRoom(socket, joinRoomMessage);
-
         const lastCommandId = joinRoomMessage.getLastcommandid();
         let commandsToApply: EditMapCommandMessage[] | undefined = undefined;
 
@@ -147,6 +146,8 @@ export class SocketManager {
         roomJoinedMessage.setTagList(joinRoomMessage.getTagList());
         roomJoinedMessage.setUserroomtoken(joinRoomMessage.getUserroomtoken());
         roomJoinedMessage.setCharacterlayerList(joinRoomMessage.getCharacterlayerList());
+        roomJoinedMessage.setCanedit(joinRoomMessage.getCanedit());
+
         if (commandsToApply) {
             const editMapCommandsArrayMessage = new EditMapCommandsArrayMessage();
             editMapCommandsArrayMessage.setEditmapcommandsList(commandsToApply);
@@ -189,7 +190,7 @@ export class SocketManager {
             roomJoinedMessage.addPlayervariable(variableMessage);
         }
 
-        if (TURN_STATIC_AUTH_SECRET !== "") {
+        if (TURN_STATIC_AUTH_SECRET) {
             const { username, password } = this.getTURNCredentials(user.id.toString(), TURN_STATIC_AUTH_SECRET);
             roomJoinedMessage.setWebrtcusername(username);
             roomJoinedMessage.setWebrtcpassword(password);
@@ -269,7 +270,7 @@ export class SocketManager {
         webrtcSignalToClient.setUserid(user.id);
         webrtcSignalToClient.setSignal(data.getSignal());
         // TODO: only compute credentials if data.signal.type === "offer"
-        if (TURN_STATIC_AUTH_SECRET !== "") {
+        if (TURN_STATIC_AUTH_SECRET) {
             const { username, password } = this.getTURNCredentials(user.id.toString(), TURN_STATIC_AUTH_SECRET);
             webrtcSignalToClient.setWebrtcusername(username);
             webrtcSignalToClient.setWebrtcpassword(password);
@@ -299,7 +300,7 @@ export class SocketManager {
         webrtcSignalToClient.setUserid(user.id);
         webrtcSignalToClient.setSignal(data.getSignal());
         // TODO: only compute credentials if data.signal.type === "offer"
-        if (TURN_STATIC_AUTH_SECRET !== "") {
+        if (TURN_STATIC_AUTH_SECRET) {
             const { username, password } = this.getTURNCredentials(user.id.toString(), TURN_STATIC_AUTH_SECRET);
             webrtcSignalToClient.setWebrtcusername(username);
             webrtcSignalToClient.setWebrtcpassword(password);
@@ -569,7 +570,7 @@ export class SocketManager {
             const webrtcStartMessage1 = new WebRtcStartMessage();
             webrtcStartMessage1.setUserid(otherUser.id);
             webrtcStartMessage1.setInitiator(true);
-            if (TURN_STATIC_AUTH_SECRET !== "") {
+            if (TURN_STATIC_AUTH_SECRET) {
                 const { username, password } = this.getTURNCredentials(
                     otherUser.id.toString(),
                     TURN_STATIC_AUTH_SECRET
@@ -586,7 +587,7 @@ export class SocketManager {
             const webrtcStartMessage2 = new WebRtcStartMessage();
             webrtcStartMessage2.setUserid(user.id);
             webrtcStartMessage2.setInitiator(false);
-            if (TURN_STATIC_AUTH_SECRET !== "") {
+            if (TURN_STATIC_AUTH_SECRET) {
                 const { username, password } = this.getTURNCredentials(user.id.toString(), TURN_STATIC_AUTH_SECRET);
                 webrtcStartMessage2.setWebrtcusername(username);
                 webrtcStartMessage2.setWebrtcpassword(password);
@@ -931,6 +932,7 @@ export class SocketManager {
 
     private cleanupRoomIfEmpty(room: GameRoom): void {
         if (room.isEmpty()) {
+            room.destroy();
             this.roomsPromises.delete(room.roomUrl);
             const deleted = this.resolvedRooms.delete(room.roomUrl);
             if (deleted) {
@@ -1135,7 +1137,7 @@ export class SocketManager {
             (err: unknown, editMapMessage: EditMapCommandMessage) => {
                 if (err) {
                     emitError(user.socket, err);
-                    throw err;
+                    return;
                 }
                 const subMessage = new SubToPusherRoomMessage();
                 subMessage.setEditmapcommandmessage(editMapMessage);

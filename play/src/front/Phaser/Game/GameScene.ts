@@ -152,8 +152,11 @@ import type { GameStateEvent } from "../../Api/Events/GameStateEvent";
 import { modalVisibilityStore } from "../../Stores/ModalStore";
 import { currentPlayerWokaStore } from "../../Stores/CurrentPlayerWokaStore";
 import { mapEditorModeStore } from "../../Stores/MapEditorStore";
+import { refreshPromptStore } from "../../Stores/RefreshPromptStore";
 import { debugAddPlayer, debugRemovePlayer } from "../../Utils/Debuggers";
 import { EntitiesCollectionsManager } from "./MapEditor/EntitiesCollectionsManager";
+import { checkCoturnServer } from "../../Components/Video/utils";
+import { faviconManager } from "./../../WebRtc/FaviconManager";
 
 export interface GameSceneInitInterface {
     reconnecting: boolean;
@@ -205,6 +208,7 @@ export class GameScene extends DirtyScene {
     private embedScreenLayoutStoreUnsubscriber!: Unsubscriber;
     private availabilityStatusStoreUnsubscriber!: Unsubscriber;
     private mapEditorModeStoreUnsubscriber!: Unsubscriber;
+    private refreshPromptStoreStoreUnsubscriber!: Unsubscriber;
 
     private modalVisibilityStoreUnsubscriber!: Unsubscriber;
 
@@ -695,7 +699,7 @@ export class GameScene extends DirtyScene {
                 setTimeout(() => {
                     if (this.connection === undefined) {
                         try {
-                            this.scene.sleep();
+                            this.hide();
                         } catch (err) {
                             console.error("Scene sleep error: ", err);
                         }
@@ -723,7 +727,7 @@ export class GameScene extends DirtyScene {
                     console.log("this.room", this.room);
                     if (this.connection === undefined) {
                         try {
-                            this.scene.sleep();
+                            this.hide();
                         } catch (err) {
                             console.error("Scene sleep error: ", err);
                         }
@@ -771,7 +775,7 @@ export class GameScene extends DirtyScene {
 
         if (!this.room.isDisconnected()) {
             try {
-                this.scene.sleep();
+                this.hide();
             } catch (err) {
                 console.error("Scene sleep error: ", err);
             }
@@ -784,7 +788,7 @@ export class GameScene extends DirtyScene {
             this.CurrentPlayer.getTextureLoadedPromise() as Promise<unknown>,
         ])
             .then(() => {
-                this.scene.wake();
+                this.hide(false);
             })
             .catch((e) =>
                 console.error(
@@ -796,6 +800,11 @@ export class GameScene extends DirtyScene {
         if (gameManager.currentStartedRoom.backgroundColor != undefined) {
             this.cameras.main.setBackgroundColor(gameManager.currentStartedRoom.backgroundColor);
         }
+    }
+
+    private hide(hide = true): void {
+        this.scene.setVisible(!hide);
+        iframeListener?.hideIFrames(hide);
     }
 
     /**
@@ -882,6 +891,17 @@ export class GameScene extends DirtyScene {
                         type: "removeRemotePlayer",
                         data: message.userId,
                     });
+                });
+
+                this.connection.refreshRoomMessageStream.subscribe((message) => {
+                    if (message.comment) {
+                        refreshPromptStore.set({
+                            comment: message.comment,
+                            timeToRefresh: message.timeToRefresh,
+                        });
+                    } else {
+                        window.location.reload();
+                    }
                 });
 
                 this.connection.playerDetailsUpdatedMessageStream.subscribe((message) => {
@@ -1063,6 +1083,19 @@ export class GameScene extends DirtyScene {
 
                 this.emoteManager = new EmoteManager(this, this.connection);
 
+                // Check WebRtc connection
+                if (onConnect.room.webrtcUserName && onConnect.room.webrtcPassword) {
+                    try {
+                        checkCoturnServer({
+                            userId: onConnect.connection.getUserId(),
+                            webRtcUser: onConnect.room.webrtcUserName,
+                            webRtcPassword: onConnect.room.webrtcPassword,
+                        });
+                    } catch (err) {
+                        console.error("Check coturn server exception: ", err);
+                    }
+                }
+
                 // Get position from UUID only after the connection to the pusher is established
                 this.tryMovePlayerWithMoveToUserParameter();
                 gameSceneIsLoadedStore.set(true);
@@ -1079,7 +1112,8 @@ export class GameScene extends DirtyScene {
             this.emoteMenuUnsubscriber != undefined ||
             this.followUsersColorStoreUnsubscriber != undefined ||
             this.peerStoreUnsubscriber != undefined ||
-            this.mapEditorModeStoreUnsubscriber != undefined
+            this.mapEditorModeStoreUnsubscriber != undefined ||
+            this.refreshPromptStoreStoreUnsubscriber != undefined
         ) {
             console.error(
                 "subscribeToStores => Check all subscriber undefined ",
@@ -1090,7 +1124,8 @@ export class GameScene extends DirtyScene {
                 this.emoteMenuUnsubscriber,
                 this.followUsersColorStoreUnsubscriber,
                 this.peerStoreUnsubscriber,
-                this.mapEditorModeStoreUnsubscriber
+                this.mapEditorModeStoreUnsubscriber,
+                this.refreshPromptStoreStoreUnsubscriber
             );
 
             throw new Error("One store is already subscribed.");
@@ -1201,9 +1236,12 @@ export class GameScene extends DirtyScene {
 
             if (newPeerNumber > oldPeersNumber) {
                 this.playSound("audio-webrtc-in");
+                faviconManager.pushNotificationFavicon();
             } else if (newPeerNumber < oldPeersNumber) {
                 this.playSound("audio-webrtc-out");
+                faviconManager.pushOriginalFavicon();
             }
+
             if (newPeerNumber > 0) {
                 if (!this.localVolumeStoreUnsubscriber) {
                     this.localVolumeStoreUnsubscriber = localVolumeStore.subscribe((spectrum) => {
@@ -1247,6 +1285,14 @@ export class GameScene extends DirtyScene {
                 this.gameMapFrontWrapper.getEntitiesManager().makeAllEntitiesInteractive(true);
             }
             this.markDirty();
+        });
+
+        this.refreshPromptStoreStoreUnsubscriber = refreshPromptStore.subscribe((comment) => {
+            if (comment) {
+                this.userInputManager.disableControls();
+            } else {
+                this.userInputManager.restoreControls();
+            }
         });
     }
 
@@ -2101,6 +2147,7 @@ ${escapedMessage}
         this.mapEditorModeManager?.destroy();
         this.peerStoreUnsubscriber?.();
         this.mapEditorModeStoreUnsubscriber?.();
+        this.refreshPromptStoreStoreUnsubscriber?.();
         this.emoteUnsubscriber?.();
         this.emoteMenuUnsubscriber?.();
         this.followUsersColorStoreUnsubscriber?.();
@@ -2890,9 +2937,5 @@ ${escapedMessage}
 
     public getActivatablesManager(): ActivatablesManager {
         return this.activatablesManager;
-    }
-
-    public isMapEditorEnabled(): boolean {
-        return ENABLE_FEATURE_MAP_EDITOR && connectionManager.currentRoom?.canEditMap === true;
     }
 }
